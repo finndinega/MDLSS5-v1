@@ -18,6 +18,7 @@ import kotlin.math.min
 
 class MainActivity : Activity() {
     private external fun nativeVulkanInfo(): String
+    private external fun nativeSuperResolve(input: Bitmap, assets: android.content.res.AssetManager, useGpu: Boolean): Bitmap?
     companion object {
         private const val PICK_IMAGE = 501
         init { System.loadLibrary("mdlss5") }
@@ -117,18 +118,27 @@ class MainActivity : Activity() {
 
     private fun enhance() {
         val input = sourceBitmap ?: run { status.text = "Choose an image first."; return }
-        try {
-            val outW = min(input.width * scaleFactor, 4096)
-            val outH = min(input.height * scaleFactor, 4096)
-            val scaled = Bitmap.createScaledBitmap(input, outW, outH, true).copy(Bitmap.Config.ARGB_8888, true)
-            val amount = strength.progress / 100f * 1.4f
-            if (amount > 0f && outW > 2 && outH > 2) sharpen(scaled, amount)
-            resultBitmap = scaled
-            preview.setImageBitmap(scaled)
-            status.text = "Enhanced: ${outW} × ${outH}. Save the result to your gallery."
-        } catch (e: OutOfMemoryError) {
-            status.text = "Image is too large for available memory. Try a smaller source image."
-        } catch (e: Exception) { status.text = "Enhancement failed: ${e.message}" }
+        status.text = "Running Real-ESRGAN AI super-resolution. This may take a while on mobile hardware…"
+        Thread {
+            try {
+                val modelOutput = nativeSuperResolve(input, assets, true)
+                val aiOutput = modelOutput ?: nativeSuperResolve(input, assets, false)
+                if (aiOutput == null) throw IllegalStateException("AI model could not initialize or process this image.")
+                val targetW = (input.width * scaleFactor).coerceAtMost(4096)
+                val targetH = (input.height * scaleFactor).coerceAtMost(4096)
+                val finalImage = if (aiOutput.width != targetW || aiOutput.height != targetH)
+                    Bitmap.createScaledBitmap(aiOutput, targetW, targetH, true) else aiOutput
+                runOnUiThread {
+                    resultBitmap = finalImage
+                    preview.setImageBitmap(finalImage)
+                    status.text = "Real-ESRGAN AI enhancement complete: ${finalImage.width} × ${finalImage.height}. Save to gallery."
+                }
+            } catch (e: OutOfMemoryError) {
+                runOnUiThread { status.text = "Not enough memory for this image. Try a smaller photo." }
+            } catch (e: Exception) {
+                runOnUiThread { status.text = "AI enhancement failed: ${e.message}" }
+            }
+        }.start()
     }
 
     private fun sharpen(bitmap: Bitmap, amount: Float) {
