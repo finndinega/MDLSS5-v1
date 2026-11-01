@@ -61,7 +61,7 @@ class FloatingControlService:Service(){
   box.addView(TextView(this).apply{text="MDLSS5 QUICK CONTROL";textSize=17f;typeface=Typeface.DEFAULT_BOLD;setTextColor(Color.WHITE)})
   box.addView(TextView(this).apply{text="Floating gaming companion";textSize=12f;setTextColor(0xFFB7C5DA.toInt());setPadding(0,dp(5),0,dp(8))})
   val toggle=Switch(this).apply{text="MDLSS5 shortcut ON";setTextColor(Color.WHITE);isChecked=enabled}
-  toggle.setOnCheckedChangeListener{_,checked->enabled=checked;bubble?.visibility=if(checked)View.VISIBLE else View.INVISIBLE;toggle.text=if(checked)"MDLSS5 shortcut ON" else "MDLSS5 shortcut OFF"}
+  toggle.setOnCheckedChangeListener{_,checked->enabled=checked;bubble?.text=if(checked)"M5 ON" else "M5 OFF";toggle.text=if(checked)"MDLSS5 shortcut ON" else "MDLSS5 shortcut OFF"}
   box.addView(toggle)
   box.addView(Button(this).apply{
    text="Launch Call of Duty: Mobile";isAllCaps=false
@@ -73,7 +73,7 @@ class FloatingControlService:Service(){
   })
   box.addView(Button(this).apply{text="Open full dashboard";isAllCaps=false;setOnClickListener{startActivity(Intent(this@FloatingControlService,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}})
   box.addView(Button(this).apply{text="Close control panel";isAllCaps=false;setOnClickListener{hidePanel()}})
-  panel=box;try{wm.addView(box,lp(dp(290),-2,Gravity.TOP or Gravity.END))}catch(_:Exception){panel=null}
+  panel=box;try{val pp=lp(dp(290),-2,Gravity.TOP or Gravity.END);pp.flags=pp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv();wm.addView(box,pp)}catch(_:Exception){panel=null}
  }
  private fun removeViews(){hidePanel();try{bubble?.let{wm.removeView(it)}}catch(_:Exception){};bubble=null;isRunning=false}
  override fun onDestroy(){removeViews();super.onDestroy()}
