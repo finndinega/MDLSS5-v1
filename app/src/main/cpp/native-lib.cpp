@@ -47,7 +47,10 @@ Java_com_fjdei_mdlss5_MainActivity_nativeSuperResolve(JNIEnv* env, jobject,
     if (AndroidBitmap_lockPixels(env, inputBitmap, &inputPixels) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
     bool gpu = requestGpu == JNI_TRUE;
-    if (gpu) ncnn::create_gpu_instance();
+    if (gpu) {
+        ncnn::create_gpu_instance();
+        gpu = ncnn::get_gpu_count() > 0;
+    }
     ncnn::Net* net = make_net(mgr, gpu);
     if (!net && gpu) {
         ncnn::destroy_gpu_instance(); gpu = false; net = make_net(mgr, false);
