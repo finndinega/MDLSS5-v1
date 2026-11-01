@@ -1,186 +1,234 @@
 package com.fjdei.mdlss5
 
 import android.app.Activity
-import android.os.Bundle
+import android.app.ActivityManager
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.ContentValues
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
-import android.net.Uri
+import android.opengl.EGL14
+import android.opengl.GLES20
 import android.os.Build
-import android.provider.MediaStore
+import android.os.Bundle
+import android.os.PowerManager
 import android.view.View
 import android.widget.*
-import kotlin.math.min
 
 class MainActivity : Activity() {
     private external fun nativeVulkanInfo(): String
-    private external fun nativeSuperResolve(input: Bitmap, assets: android.content.res.AssetManager, useGpu: Boolean): Bitmap?
     companion object {
-        private const val PICK_IMAGE = 501
         init { System.loadLibrary("mdlss5") }
+        private const val GLOBAL_CODM = "com.activision.callofduty.shooter"
+        private const val GARENA_CODM = "com.garena.game.codm"
+        private const val BG = 0xFF090D18.toInt()
+        private const val PANEL = 0xFF151E30.toInt()
+        private const val WHITE = Color.WHITE
+        private const val MUTED = 0xFFB5C2D8.toInt()
+        private const val ACCENT = 0xFF55C8FF.toInt()
     }
-    private var sourceBitmap: Bitmap? = null
-    private var resultBitmap: Bitmap? = null
-    private lateinit var preview: ImageView
-    private lateinit var status: TextView
-    private lateinit var scaleLabel: TextView
-    private lateinit var strength: SeekBar
-    private var scaleFactor = 2
+
+    private lateinit var report: TextView
+    private lateinit var profileReport: TextView
+    private var selectedProfile = "Balanced"
+    private var detectedPackage: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        buildScreen()
-        refreshDeviceReport()
+        render()
+        refreshDiagnostics()
     }
 
-    private fun buildScreen() {
+    private fun text(value: String, size: Float, color: Int = WHITE, bold: Boolean = false): TextView =
+        TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 7, 0, 7)
+        }
+
+    private fun button(value: String, action: () -> Unit): Button =
+        Button(this).apply {
+            text = value
+            isAllCaps = false
+            setOnClickListener { action() }
+        }
+
+    private fun card(parent: LinearLayout, heading: String, body: String): TextView {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 12, 16, 12)
+            setBackgroundColor(PANEL)
+        }
+        box.addView(text(heading, 17f, WHITE, true))
+        val bodyView = text(body, 13f, MUTED)
+        box.addView(bodyView)
+        parent.addView(box, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 12 })
+        return bodyView
+    }
+
+    private fun render() {
         val scroll = ScrollView(this)
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 34, 24, 36)
-            setBackgroundColor(Color.rgb(9, 13, 24))
+            setPadding(20, 28, 20, 32)
+            setBackgroundColor(BG)
         }
-        fun label(value: String, size: Float, color: Int, bold: Boolean = false): TextView =
-            TextView(this).apply {
-                text = value; textSize = size; setTextColor(color)
-                if (bold) setTypeface(typeface, Typeface.BOLD)
-                setPadding(0, 10, 0, 10)
+        page.addView(text("MDLSS5", 32f, WHITE, true))
+        page.addView(text("ANDROID GAMING COMPANION · V2.0", 12f, ACCENT, true))
+        page.addView(text("Call of Duty: Mobile — first compatibility target", 17f, WHITE, true))
+        page.addView(text("Device-aware gaming profiles, GPU diagnostics and a CODM launcher.", 14f, MUTED))
+        page.addView(text("Important compatibility note", 17f, ACCENT, true))
+        page.addView(text("This app does not inject code into CODM or replace its renderer. Android production security prevents an ordinary app from loading a third-party Vulkan layer into another non-debuggable game's process. These profiles are recommendations to apply inside CODM; they do not silently change the game's graphics settings.", 13f, MUTED))
+        page.addView(button("Detect phone and graphics hardware") { refreshDiagnostics() })
+        report = card(page, "Device and GPU diagnostics", "Detecting device…")
+        page.addView(text("CODM game detection", 19f, WHITE, true))
+        val gameStatus = card(page, "Installed game edition", "Checking Call of Duty: Mobile…")
+        page.addView(button("Refresh CODM detection") {
+            detectedPackage = findCodmPackage()
+            gameStatus.text = codmStatus()
+        })
+        page.addView(button("Launch Call of Duty: Mobile") { launchCodm() })
+        page.addView(text("Gaming profile", 19f, WHITE, true))
+        page.addView(text("Choose the target behavior. The matching in-game settings are shown below for you to select in CODM.", 13f, MUTED))
+        val profiles = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        listOf("Performance", "Balanced", "Quality").forEach { name ->
+            val choice = RadioButton(this).apply {
+                text = name
+                textSize = 15f
+                setTextColor(WHITE)
+                id = View.generateViewId()
+                isChecked = name == selectedProfile
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        selectedProfile = name
+                        updateProfile()
+                    }
+                }
             }
-        fun button(value: String, action: () -> Unit): Button = Button(this).apply {
-            text = value; isAllCaps = false; setOnClickListener { action() }
+            profiles.addView(choice)
         }
-        val white = Color.WHITE
-        val muted = Color.rgb(174, 188, 210)
-        page.addView(label("MDLSS5", 32f, white, true))
-        page.addView(label("MOBILE IMAGE ENHANCER · V1.0", 12f, Color.rgb(90, 190, 255), true))
-        page.addView(label("Enhance an image", 21f, white, true))
-        page.addView(label("Select a photo, upscale it, and apply adjustable sharpening. Processing runs locally on your phone.", 14f, muted))
-        page.addView(button("Choose image from phone") { chooseImage() })
-        preview = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(Color.rgb(20, 27, 42))
-            contentDescription = "Selected or enhanced image preview"
-        }
-        page.addView(preview, LinearLayout.LayoutParams(-1, 520).apply { topMargin = 12; bottomMargin = 12 })
-        scaleLabel = label("Output size: 2×", 15f, white, true)
-        page.addView(scaleLabel)
-        val scaleChoices = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        listOf("2×", "3×", "4×").forEachIndexed { index, value ->
-            scaleChoices.addView(RadioButton(this).apply {
-                text = value; textSize = 14f; setTextColor(white); id = View.generateViewId()
-                isChecked = index == 0
-                setOnClickListener { scaleFactor = index + 2; scaleLabel.text = "Output size: ${scaleFactor}×" }
-            })
-        }
-        page.addView(scaleChoices)
-        page.addView(label("Sharpening strength", 15f, white, true))
-        strength = SeekBar(this).apply { max = 100; progress = 35; contentDescription = "Sharpening strength" }
-        page.addView(strength)
-        page.addView(button("Enhance image") { enhance() })
-        page.addView(button("Save enhanced image") { saveResult() })
-        status = label("Choose an image to begin.", 14f, muted)
-        page.addView(status)
-        page.addView(label("Device graphics diagnostics", 20f, white, true))
-        page.addView(label("Vulkan is checked separately from image processing. This version uses a local CPU image pipeline; it does not claim NVIDIA DLSS or GPU frame generation.", 13f, muted))
-        page.addView(button("Refresh Vulkan report") { refreshDeviceReport() })
+        page.addView(profiles)
+        profileReport = card(page, "Recommended CODM settings", "")
+        page.addView(text("What MDLSS5 can and cannot control", 18f, WHITE, true))
+        page.addView(text("Available here: device/GPU identification, Vulkan capability reporting, memory and thermal status, CODM edition detection, profile recommendations and game launching. Not available to a normal third-party app: changing CODM's internal render resolution, injecting a neural upscaler, generating frames inside CODM, changing its shaders, or forcing its FPS cap.", 13f, MUTED))
+        page.addView(text("No anti-cheat bypass or game-file modification is used.", 12f, ACCENT, true))
         scroll.addView(page)
         setContentView(scroll)
+        updateProfile()
     }
 
-    private fun chooseImage() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE); type = "image/*"
-        }
-        startActivityForResult(intent, PICK_IMAGE)
-    }
-
-    @Deprecated("Handled for compatibility with the minimal no-dependency project")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PICK_IMAGE && resultCode == RESULT_OK) {
-            val uri: Uri = data?.data ?: return
+    private fun findCodmPackage(): String? {
+        for (pkg in listOf(GARENA_CODM, GLOBAL_CODM)) {
             try {
-                contentResolver.openInputStream(uri).use { stream ->
-                    val decoded = BitmapFactory.decodeStream(stream) ?: error("Unsupported image")
-                    sourceBitmap = decoded.copy(Bitmap.Config.ARGB_8888, false)
-                    resultBitmap = null
-                    preview.setImageBitmap(sourceBitmap)
-                    status.text = "Image loaded: ${decoded.width} × ${decoded.height}. Choose Enhance image."
-                }
-            } catch (e: Exception) { status.text = "Could not open image: ${e.message}" }
+                packageManager.getApplicationInfo(pkg, 0)
+                return pkg
+            } catch (_: Exception) { }
         }
+        return null
     }
 
-    private fun enhance() {
-        val input = sourceBitmap ?: run { status.text = "Choose an image first."; return }
-        status.text = "Running Real-ESRGAN AI super-resolution. This may take a while on mobile hardware…"
-        Thread {
-            try {
-                val modelOutput = nativeSuperResolve(input, assets, true)
-                val aiOutput = modelOutput ?: nativeSuperResolve(input, assets, false)
-                if (aiOutput == null) throw IllegalStateException("AI model could not initialize or process this image.")
-                val targetW = (input.width * scaleFactor).coerceAtMost(4096)
-                val targetH = (input.height * scaleFactor).coerceAtMost(4096)
-                val finalImage = if (aiOutput.width != targetW || aiOutput.height != targetH)
-                    Bitmap.createScaledBitmap(aiOutput, targetW, targetH, true) else aiOutput
-                runOnUiThread {
-                    resultBitmap = finalImage
-                    preview.setImageBitmap(finalImage)
-                    status.text = "Real-ESRGAN AI enhancement complete: ${finalImage.width} × ${finalImage.height}. Save to gallery."
-                }
-            } catch (e: OutOfMemoryError) {
-                runOnUiThread { status.text = "Not enough memory for this image. Try a smaller photo." }
-            } catch (e: Exception) {
-                runOnUiThread { status.text = "AI enhancement failed: ${e.message}" }
-            }
-        }.start()
+    private fun codmStatus(): String = when (detectedPackage) {
+        GARENA_CODM -> "Garena Call of Duty: Mobile is installed. Package: " + GARENA_CODM
+        GLOBAL_CODM -> "Global Call of Duty: Mobile is installed. Package: " + GLOBAL_CODM
+        else -> "CODM was not detected. Install the official regional version from Google Play."
     }
 
-    private fun sharpen(bitmap: Bitmap, amount: Float) {
-        val w = bitmap.width; val h = bitmap.height
-        val original = IntArray(w * h); bitmap.getPixels(original, 0, w, 0, 0, w, h)
-        val output = original.copyOf()
-        val shifts = intArrayOf(16, 8, 0)
-        for (y in 1 until h - 1) for (x in 1 until w - 1) {
-            val i = y * w + x
-            val c = original[i]
-            for (shift in shifts) {
-                val center = (c shr shift) and 255
-                val blur = (((original[i-w] shr shift) and 255) + ((original[i+w] shr shift) and 255) +
-                    ((original[i-1] shr shift) and 255) + ((original[i+1] shr shift) and 255)) / 4f
-                val v = (center + (center - blur) * amount).toInt().coerceIn(0, 255)
-                output[i] = (output[i] and (255 shl shift).inv()) or (v shl shift)
-            }
+    private fun launchCodm() {
+        val pkg = detectedPackage ?: findCodmPackage()
+        detectedPackage = pkg
+        if (pkg == null) {
+            Toast.makeText(this, "Call of Duty: Mobile is not installed.", Toast.LENGTH_LONG).show()
+            return
         }
-        bitmap.setPixels(output, 0, w, 0, 0, w, h)
+        val intent = packageManager.getLaunchIntentForPackage(pkg)
+        if (intent == null) {
+            Toast.makeText(this, "CODM launch activity is unavailable.", Toast.LENGTH_LONG).show()
+        } else startActivity(intent)
     }
 
-    private fun saveResult() {
-        val bitmap = resultBitmap ?: run { status.text = "Enhance an image before saving."; return }
+    private fun updateProfile() {
+        if (!::profileReport.isInitialized) return
+        val advice = when (selectedProfile) {
+            "Performance" -> "Graphics quality: Low (or the lowest stable option). Frame rate: highest option that remains stable during a full match. Disable optional visual effects if available. Prefer stable frame pacing and lower heat over a short-lived peak FPS."
+            "Quality" -> "Graphics quality: High only if CODM offers it for this device and gameplay remains smooth. Frame rate: one step below the maximum if high settings cause heat or stutter. Enable optional effects selectively."
+            else -> "Graphics quality: Medium. Frame rate: High or the highest consistently stable option. Keep optional effects moderate. This is the recommended starting point for balancing clarity, heat and responsiveness."
+        }
+        profileReport.text = selectedProfile + " profile\n" + advice + "\n\nThese are advisory settings only. Set them in CODM's own Audio and Graphics menu; availability varies by game build and device."
+    }
+
+    private fun glInfo(): String {
+        var display = EGL14.EGL_NO_DISPLAY
+        var context = EGL14.EGL_NO_CONTEXT
+        var surface = EGL14.EGL_NO_SURFACE
         try {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, "MDLSS5_${System.currentTimeMillis()}.jpg")
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/MDLSS5")
+            display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+            if (display == EGL14.EGL_NO_DISPLAY) return "OpenGL renderer: unavailable"
+            val version = IntArray(2)
+            if (!EGL14.eglInitialize(display, version, 0, version, 1)) return "OpenGL renderer: EGL initialization failed"
+            val configAttrs = intArrayOf(EGL14.EGL_RENDERABLE_TYPE, 4, EGL14.EGL_SURFACE_TYPE, 1, EGL14.EGL_NONE)
+            val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
+            val count = IntArray(1)
+            if (!EGL14.eglChooseConfig(display, configAttrs, 0, configs, 0, 1, count, 0) || count[0] == 0) return "OpenGL renderer: no EGL config"
+            val ctxAttrs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+            context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT, ctxAttrs, 0)
+            val surfAttrs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
+            surface = EGL14.eglCreatePbufferSurface(display, configs[0], surfAttrs, 0)
+            if (context == EGL14.EGL_NO_CONTEXT || surface == EGL14.EGL_NO_SURFACE ||
+                !EGL14.eglMakeCurrent(display, surface, surface, context)) return "OpenGL renderer: context creation failed"
+            val vendor = GLES20.glGetString(GLES20.GL_VENDOR) ?: "Unknown"
+            val renderer = GLES20.glGetString(GLES20.GL_RENDERER) ?: "Unknown"
+            val versionString = GLES20.glGetString(GLES20.GL_VERSION) ?: "Unknown"
+            return "OpenGL ES: " + versionString + "\nGPU vendor: " + vendor + "\nGPU renderer: " + renderer
+        } catch (e: Exception) {
+            return "OpenGL renderer unavailable: " + e.message
+        } finally {
+            if (display != EGL14.EGL_NO_DISPLAY) {
+                EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+                if (surface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, surface)
+                if (context != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(display, context)
+                EGL14.eglTerminate(display)
             }
-            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: error("Gallery could not create file")
-            contentResolver.openOutputStream(uri).use { out ->
-                if (out == null || !bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)) error("Could not write image")
-            }
-            status.text = "Saved enhanced image to Pictures/MDLSS5."
-        } catch (e: Exception) { status.text = "Save failed: ${e.message}" }
+        }
     }
 
-    private fun refreshDeviceReport() {
-        val pm = packageManager
-        val hasVersion = pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_VERSION)
-        val hasLevel = pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
-        val report = try { nativeVulkanInfo() } catch (e: Exception) { "Native Vulkan check unavailable: ${e.message}" }
-        if (::status.isInitialized) status.text = "Android Vulkan feature flags — version: ${if (hasVersion) "reported" else "not reported"}; level: ${if (hasLevel) "reported" else "not reported"}\n${report}"
+    private fun refreshDiagnostics() {
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val mem = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mem)
+        val totalRam = mem.totalMem / (1024L * 1024L)
+        val freeRam = mem.availMem / (1024L * 1024L)
+        val cpu = Runtime.getRuntime().availableProcessors()
+        val refreshHz = if (Build.VERSION.SDK_INT >= 30) this.display?.refreshRate
+            ?: resources.displayMetrics.refreshRate else windowManager.defaultDisplay.refreshRate
+        val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val temp = battery?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+        val tempText = if (temp > 0) String.format("%.1f°C", temp / 10f) else "Unavailable"
+        val thermal = if (Build.VERSION.SDK_INT >= 29) {
+            when (getSystemService(PowerManager::class.java).currentThermalStatus) {
+                PowerManager.THERMAL_STATUS_NONE -> "Normal"
+                PowerManager.THERMAL_STATUS_LIGHT -> "Light"
+                PowerManager.THERMAL_STATUS_MODERATE -> "Moderate"
+                PowerManager.THERMAL_STATUS_SEVERE -> "Severe"
+                PowerManager.THERMAL_STATUS_CRITICAL -> "Critical"
+                PowerManager.THERMAL_STATUS_EMERGENCY -> "Emergency"
+                else -> "Unknown"
+            }
+        } else "Not exposed by Android version"
+        val soc = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.HARDWARE
+        val abis = Build.SUPPORTED_ABIS.joinToString()
+        val vulkan = try { nativeVulkanInfo() } catch (e: Exception) { "Vulkan query failed: " + e.message }
+        detectedPackage = findCodmPackage()
+        report.text = "Phone: " + Build.MANUFACTURER + " " + Build.MODEL +
+            "\nSoC / hardware: " + soc +
+            "\nAndroid: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")" +
+            "\nCPU logical cores: " + cpu +
+            "\nRAM: " + totalRam + " MB total · " + freeRam + " MB currently available" +
+            "\nScreen refresh rate: " + String.format("%.1f", refreshHz) + " Hz" +
+            "\nBattery temperature: " + tempText +
+            "\nThermal status: " + thermal +
+            "\nSupported ABIs: " + abis +
+            "\n\n" + glInfo() + "\n\n" + vulkan +
+            "\n\nCODM: " + (detectedPackage ?: "not detected")
+        updateProfile()
     }
 }
