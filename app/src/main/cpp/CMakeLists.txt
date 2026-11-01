@@ -1,7 +1,20 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(mdlss5)
+include(FetchContent)
+set(NCNN_VULKAN ON CACHE BOOL "" FORCE)
+set(NCNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+set(NCNN_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(NCNN_OPENMP ON CACHE BOOL "" FORCE)
+FetchContent_Declare(ncnn
+  GIT_REPOSITORY https://github.com/Tencent/ncnn.git
+  GIT_TAG 20250503
+  GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(ncnn)
 add_library(mdlss5 SHARED native-lib.cpp)
 find_library(log-lib log)
 find_library(android-lib android)
+find_library(jnigraphics-lib jnigraphics)
 find_library(vulkan-lib vulkan)
-target_link_libraries(mdlss5 ${log-lib} ${android-lib} ${vulkan-lib})
+target_link_libraries(mdlss5 ncnn ${log-lib} ${android-lib} ${jnigraphics-lib} ${vulkan-lib})
