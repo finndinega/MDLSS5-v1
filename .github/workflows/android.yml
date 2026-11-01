@@ -19,13 +19,6 @@ jobs:
           packages: platform-tools
       - name: Install Android SDK and NDK packages
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
-      - name: Download Real-ESRGAN NCNN model weights
-        run: |
-          mkdir -p app/src/main/assets/models
-          curl -fL --retry 3 'https://huggingface.co/edgetools/realesrgan/resolve/main/realesrgan-x4plus.param' -o app/src/main/assets/models/realesrgan-x4plus.param
-          curl -fL --retry 3 'https://huggingface.co/edgetools/realesrgan/resolve/main/realesrgan-x4plus.bin' -o app/src/main/assets/models/realesrgan-x4plus.bin
-          test -s app/src/main/assets/models/realesrgan-x4plus.param
-          test -s app/src/main/assets/models/realesrgan-x4plus.bin
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -33,7 +26,7 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: MDLSS5-debug-apk
+          name: MDLSS5-gaming-companion-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
