@@ -1,80 +1,46 @@
 #include <jni.h>
-#include <android/bitmap.h>
-#include <android/asset_manager_jni.h>
-#include <android/asset_manager.h>
-#include <cstring>
+#include <vulkan/vulkan.h>
 #include <cstdio>
-#include "net.h"
 
-static ncnn::Net* make_net(AAssetManager* mgr, bool use_gpu) {
-    auto* net = new ncnn::Net();
-    net->opt.use_vulkan_compute = use_gpu;
-    net->opt.num_threads = 2;
-    if (net->load_param(mgr, "models/realesrgan-x4plus.param") != 0 ||
-        net->load_model(mgr, "models/realesrgan-x4plus.bin") != 0) {
-        delete net; return nullptr;
-    }
-    return net;
-}
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_fjdei_mdlss5_MainActivity_nativeVulkanInfo(JNIEnv* env, jobject) {
-    ncnn::create_gpu_instance();
-    const int count = ncnn::get_gpu_count();
-    ncnn::destroy_gpu_instance();
-    char buffer[160];
-    if (count > 0) snprintf(buffer, sizeof(buffer), "Vulkan compute available (%d compatible GPU device%s)", count, count == 1 ? "" : "s");
-    else snprintf(buffer, sizeof(buffer), "Vulkan compute unavailable; CPU inference will be used");
-    return env->NewStringUTF(buffer);
-}
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_fjdei_mdlss5_MainActivity_nativeSuperResolve(JNIEnv* env, jobject,
-    jobject inputBitmap, jobject assetManager, jboolean requestGpu) {
-    AndroidBitmapInfo info{};
-    if (AndroidBitmap_getInfo(env, inputBitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
-        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || !info.width || !info.height) return nullptr;
-    void* inputPixels = nullptr;
-    if (AndroidBitmap_lockPixels(env, inputBitmap, &inputPixels) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
-    AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
-    bool gpu = requestGpu == JNI_TRUE;
-    if (gpu) {
-        ncnn::create_gpu_instance();
-        gpu = ncnn::get_gpu_count() > 0;
+    VkApplicationInfo app{};
+    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "MDLSS5 Gaming";
+    app.apiVersion = VK_API_VERSION_1_0;
+    VkInstanceCreateInfo create{};
+    create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    create.pApplicationInfo = &app;
+    VkInstance instance = VK_NULL_HANDLE;
+    if (vkCreateInstance(&create, nullptr, &instance) != VK_SUCCESS)
+        return env->NewStringUTF("Vulkan instance creation failed; hardware acceleration cannot be confirmed.");
+    uint32_t count = 0;
+    if (vkEnumeratePhysicalDevices(instance, &count, nullptr) != VK_SUCCESS || count == 0) {
+        vkDestroyInstance(instance, nullptr);
+        return env->NewStringUTF("No Vulkan physical device was exposed by the driver.");
     }
-    ncnn::Net* net = make_net(mgr, gpu);
-    if (!net && gpu) {
-        ncnn::destroy_gpu_instance(); gpu = false; net = make_net(mgr, false);
+    VkPhysicalDevice devices[8]{};
+    uint32_t shown = count > 8 ? 8 : count;
+    vkEnumeratePhysicalDevices(instance, &shown, devices);
+    char report[2048];
+    int used = snprintf(report, sizeof(report), "Vulkan devices detected: %u\n", count);
+    for (uint32_t i = 0; i < shown && used < (int)sizeof(report) - 256; ++i) {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(devices[i], &props);
+        VkPhysicalDeviceMemoryProperties memory{};
+        vkGetPhysicalDeviceMemoryProperties(devices[i], &memory);
+        VkDeviceSize localBytes = 0;
+        for (uint32_t h = 0; h < memory.memoryHeapCount; ++h)
+            if (memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                localBytes += memory.memoryHeaps[h].size;
+        used += snprintf(report + used, sizeof(report) - used,
+            "%s: %s | Vulkan %u.%u.%u | device-local heap %.0f MB\n",
+            props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated GPU" :
+            props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete GPU" : "GPU/device",
+            props.deviceName, VK_VERSION_MAJOR(props.apiVersion),
+            VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion),
+            (double)localBytes / (1024.0 * 1024.0));
     }
-    if (!net) { AndroidBitmap_unlockPixels(env, inputBitmap); return nullptr; }
-    const int w = (int)info.width, h = (int)info.height;
-    ncnn::Mat in = ncnn::Mat::from_pixels((const unsigned char*)inputPixels,
-        ncnn::Mat::PIXEL_RGBA2RGB, w, h);
-    AndroidBitmap_unlockPixels(env, inputBitmap);
-    const float norm[3] = {1.f/255.f,1.f/255.f,1.f/255.f};
-    in.substract_mean_normalize(nullptr, norm);
-    ncnn::Mat out;
-    ncnn::Extractor ex = net->create_extractor();
-    ex.input("data", in);
-    int ret = ex.extract("output", out);
-    delete net;
-    if (gpu) ncnn::destroy_gpu_instance();
-    if (ret != 0 || out.empty() || out.w > 8192 || out.h > 8192) return nullptr;
-    const float denorm[3] = {255.f,255.f,255.f};
-    out.substract_mean_normalize(nullptr, denorm);
-    ncnn::Mat pixels;
-    out.to_pixels(pixels, ncnn::Mat::PIXEL_RGB2RGBA);
-    const int ow = out.w, oh = out.h;
-    jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
-    jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
-    jfieldID argbField = env->GetStaticFieldID(configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
-    jobject argb = env->GetStaticObjectField(configClass, argbField);
-    jmethodID create = env->GetStaticMethodID(bitmapClass, "createBitmap",
-        "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
-    jobject result = env->CallStaticObjectMethod(bitmapClass, create, ow, oh, argb);
-    AndroidBitmapInfo outInfo{}; void* outPixels = nullptr;
-    if (!result || AndroidBitmap_getInfo(env, result, &outInfo) != ANDROID_BITMAP_RESULT_SUCCESS ||
-        AndroidBitmap_lockPixels(env, result, &outPixels) != ANDROID_BITMAP_RESULT_SUCCESS) return nullptr;
-    for (int y=0; y<oh; ++y)
-        memcpy((unsigned char*)outPixels + y*outInfo.stride, pixels.row(y), ow*4);
-    AndroidBitmap_unlockPixels(env, result);
-    return result;
+    vkDestroyInstance(instance, nullptr);
+    return env->NewStringUTF(report);
 }
