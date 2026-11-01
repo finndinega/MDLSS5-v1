@@ -198,8 +198,8 @@ class MainActivity : Activity() {
         val totalRam = mem.totalMem / (1024L * 1024L)
         val freeRam = mem.availMem / (1024L * 1024L)
         val cpu = Runtime.getRuntime().availableProcessors()
-        val refreshHz = if (Build.VERSION.SDK_INT >= 30) this.display?.refreshRate
-            ?: resources.displayMetrics.refreshRate else windowManager.defaultDisplay.refreshRate
+        @Suppress("DEPRECATION")
+        val refreshHz = windowManager.defaultDisplay.refreshRate
         val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val temp = battery?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
         val tempText = if (temp > 0) String.format("%.1f°C", temp / 10f) else "Unavailable"
