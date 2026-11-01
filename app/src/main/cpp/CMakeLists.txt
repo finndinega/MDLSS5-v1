@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(mdlss5)
+add_library(mdlss5 SHARED native-lib.cpp)
+find_library(log-lib log)
+find_library(android-lib android)
+find_library(vulkan-lib vulkan)
+target_link_libraries(mdlss5 ${log-lib} ${android-lib} ${vulkan-lib})
