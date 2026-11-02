@@ -73,6 +73,7 @@ class MainActivity : Activity() {
         })}
         root.addView(group)
         profileInfo=card(root,"Profile recommendations","")
+        root.addView(btn("OPEN MDLSS5 GRAPHICS LAB"){startActivity(Intent(this,GraphicsLabActivity::class.java))})
         root.addView(label("HARDWARE DIAGNOSTICS",18f,Color.WHITE,true))
         diagnostics=card(root,"Phone, GPU and system status","Tap refresh to scan your phone.")
         root.addView(btn("Refresh hardware diagnostics"){refreshDiagnostics()})
@@ -84,7 +85,7 @@ class MainActivity : Activity() {
         codm=findCodm();game.text=gameStatus();refreshStatus();updateProfile();refreshDiagnostics()
     }
     private fun refreshStatus(){
-        status.text="✓ MDLSS5 is installed and running\nVersion 2.1 · Android gaming companion"
+        status.text="✓ MDLSS5 is installed and running\nVersion 2.2 · Graphics Lab prototype"
         overlayStatus.text=if(Settings.canDrawOverlays(this)){
             if(FloatingControlService.isRunning)"Permission granted. Floating shortcut is ON." else "Permission granted. Floating shortcut is OFF."
         }else "Permission not granted. Allow it to display controls over CODM."
