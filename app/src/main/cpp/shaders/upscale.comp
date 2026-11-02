@@ -1,0 +1,31 @@
+#version 450
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+layout(set=0,binding=0,std430) readonly buffer InputPixels { uint src[]; };
+layout(set=0,binding=1,std430) writeonly buffer OutputPixels { uint dst[]; };
+layout(push_constant) uniform Params { int width; int height; int scale; float sharpness; float contrast; } p;
+vec3 sampleBase(vec2 pos) {
+  vec2 q=clamp(pos,vec2(0.0),vec2(float(p.width-1),float(p.height-1)));
+  ivec2 a=ivec2(floor(q)), b=min(a+ivec2(1),ivec2(p.width-1,p.height-1));
+  vec2 f=fract(q);
+  uint c00=src[a.y*p.width+a.x], c10=src[a.y*p.width+b.x];
+  uint c01=src[b.y*p.width+a.x], c11=src[b.y*p.width+b.x];
+  vec3 v00=vec3((c00>>16)&255u,(c00>>8)&255u,c00&255u);
+  vec3 v10=vec3((c10>>16)&255u,(c10>>8)&255u,c10&255u);
+  vec3 v01=vec3((c01>>16)&255u,(c01>>8)&255u,c01&255u);
+  vec3 v11=vec3((c11>>16)&255u,(c11>>8)&255u,c11&255u);
+  return mix(mix(v00,v10,f.x),mix(v01,v11,f.x),f.y);
+}
+void main() {
+  ivec2 o=ivec2(gl_GlobalInvocationID.xy);
+  ivec2 outSize=ivec2(p.width*p.scale,p.height*p.scale);
+  if(any(greaterThanEqual(o,outSize))) return;
+  vec2 srcPos=vec2(o)/float(p.scale);
+  vec3 center=sampleBase(srcPos), blur=vec3(0.0);
+  for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) blur+=sampleBase(srcPos+vec2(x,y)/float(p.scale));
+  blur/=9.0;
+  vec3 detail=center-blur;
+  float edge=clamp(length(detail)/55.0,0.0,1.0);
+  vec3 color=(center+detail*p.sharpness*edge-127.5)*p.contrast+127.5;
+  uvec3 rgb=uvec3(clamp(color,vec3(0.0),vec3(255.0)));
+  dst[o.y*outSize.x+o.x]=0xFF000000u|(rgb.r<<16)|(rgb.g<<8)|rgb.b;
+}
